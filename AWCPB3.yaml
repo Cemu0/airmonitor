@@ -1,0 +1,471 @@
+# esphome compile AWCPB3.yaml && esphome upload AWCPB3.yaml
+
+esphome:
+  name: acwcpb
+  includes: 
+    - libs/AQI_calculate.h
+
+
+esp8266:
+  board: esp07s
+
+# Enable logging
+logger:
+  level: debug 
+
+
+# Enable Home Assistant API
+# api:
+#   password: "1fCy35laFYbK"
+
+ota:
+  - platform: esphome
+    password: "1fCy35laFYbK"
+
+wifi:
+  id: mywifi
+  ssid: "YourSSID"
+  password: "YourPassword"
+
+  # prevent the system from self reboot if 
+  reboot_timeout: 0s
+  power_save_mode: none
+  # enable_on_boot: true
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  # ap:
+  #   ssid: "Acwcpb Fallback Hotspot"
+  #   password: "1fCy35laFYbK"
+  on_disconnect:
+    then:
+      - display.page.show: aqi
+    
+# Example configuration entry
+web_server:
+  port: 80
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Asia/Ho_Chi_Minh
+    servers:
+     - 0.pool.ntp.org
+     - 1.pool.ntp.org
+     - 2.pool.ntp.org
+    on_time_sync:
+      then:
+        - lambda: |-
+             if (id(sntp_time).now().is_valid() && id(first_boot)) {
+               id(mywifi).disable();
+               id(first_boot) = false;
+             }
+
+############ WIFI INFO ############
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: wifi_address_0
+      name: ESP IP Address
+    ssid:
+      id: ssidwifi
+      name: ESP Connected SSID
+
+############ DISPLAY ############
+
+font:
+  # - file:
+  #     type: gfonts
+  #     family: Roboto
+  #     weight: 100
+  #   id: myfont
+  #   size: 14
+    
+  - file: "gfonts://Open Sans"
+    id: open_sans
+    size: 12
+    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+
+globals:
+  - id: last_button_press
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+  - id: first_boot
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: screenblink
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  - id: alarm_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (millis() - id(last_button_press) > 120000) { // 60 seconds
+            id(my_display).set_contrast(0.1); // Dim the display
+          }
+          int air_problem = check_save_air();
+          if (air_problem){
+            if(id(screenblink)){
+              id(my_display).set_contrast(0.1); 
+              id(screenblink) = false;
+            }else{
+              id(my_display).set_contrast(1.0);
+              id(screenblink) = true;
+            }
+            id(buzzer).toggle();
+            id(alarm_state) = true;
+            if(air_problem == 1)
+              id(my_display).show_page(id(aqi));
+            else if(air_problem == 2)
+              id(my_display).show_page(id(co2page));
+            else 
+              id(my_display).show_page(id(alarm_page));
+          }
+          else{
+            if(id(alarm_state))
+              id(buzzer).turn_off();
+            id(alarm_state) = false;
+          }
+
+  # show display page every 5s but skip the wifi page and alarm_page
+  - interval: 10s
+    then:
+      if:
+        condition: 
+          lambda: |-
+            return (millis() - id(last_button_press) > 60000);
+        then:
+          - if:
+              condition:
+                not:
+                  wifi.enabled
+              then:
+                - display.page.show_next: my_display
+          - if:
+              condition:
+                and:
+                  - not:
+                      wifi.enabled
+                  - or:
+                    - display.is_displaying_page: onwifi
+                    - display.is_displaying_page: alarm_page
+              then:
+                - display.page.show: aqi
+  
+  - interval: 60s
+    then:
+      - delay: 30s
+      - lambda: |-
+          if (id(first_boot)) {
+            id(mywifi).disable();
+            id(first_boot) = false;
+          }
+      
+i2c:
+  sda: 14
+  scl: 12
+  frequency: 800kHz
+  # scan: true
+
+uart:
+  - id: uartpm
+    tx_pin: 5
+    rx_pin: 4
+    baud_rate: 9600
+
+  # - id: uartco2
+  #   tx_pin: 2 #15
+  #   rx_pin: 13
+  #   baud_rate: 9600
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    id: my_display
+    pages:
+      - id: onwifi
+        lambda: |-
+          it.strftime(0, 0, id(open_sans), "%Y-%m-%d  %H:%M:%S", id(sntp_time).now());
+          it.print(0, 13, id(open_sans), id(mywifi).is_disabled() ? "wifi off:" : "wifi on :");
+          it.print(45, 13, id(open_sans), id(mywifi).is_connected() ? "Connected" : "Disconnected");
+          it.print(0, 26, id(open_sans), id(ssidwifi).state.c_str());
+          it.printf(0, 41, id(open_sans), "%s %.0f%%", id(wifi_address_0).state.c_str(), id(wifi_signal_percent).state);
+      
+      - id: aqi
+        lambda: |-
+          //calulate AQI
+          std::string aqi_level = "Good";
+
+          float aqi = aqi_calulate();
+          if (aqi > 300.0) {
+            aqi_level = " Hazardous";
+          } else if (aqi > 200.0) {
+            aqi_level = " Very Unhealthy";
+          } else if (aqi > 150.0) {
+            aqi_level = " Unhealthy for All";
+          } else if (aqi > 100.0) {
+            aqi_level = "Unhealthy for Some";
+          } else if (aqi > 50.0) {
+            aqi_level = " Moderate";
+          }
+          
+          //case Nan
+          if (aqi < 0) {
+            aqi_level = "Loading";
+          }
+    
+          it.printf(0, 0, id(open_sans), "AQI: %.0f", aqi);
+          it.strftime(80, 0, id(open_sans), "%H:%M:%S", id(sntp_time).now());
+
+          it.printf(0, 13, id(open_sans), "PM2.5: %.1f µg/m³", id(pm_2_5).state);
+          it.printf(0, 26, id(open_sans), "AQI index meaning: ");
+          it.printf(0, 39, id(open_sans), "%s", aqi_level.c_str());
+
+      - id: pmpage
+        lambda: |-
+          float aqi = aqi_calulate();
+          it.printf(0, 0, id(open_sans), "AQI: %.0f", aqi);
+          it.strftime(80, 0, id(open_sans), "%H:%M:%S", id(sntp_time).now());
+
+          it.printf(0, 13, id(open_sans), "PM1.0: %.1f µg/m³", id(pm_1_0).state);
+          it.printf(0, 26, id(open_sans), "PM2.5: %.1f µg/m³", id(pm_2_5).state);
+          it.printf(0, 39, id(open_sans), "PM10.0: %.1f µg/m³", id(pm_10_0).state);
+          
+
+      - id: temppage
+        lambda: |-
+          float aqi = aqi_calulate();
+          it.printf(0, 0, id(open_sans), "AQI: %.0f", aqi);
+          it.strftime(80, 0, id(open_sans), "%H:%M:%S", id(sntp_time).now());
+
+          float feel_like = 0.0;
+          
+          // calculating "feels like" temperature with humidity
+          float temperature_n = id(temperature_a).state;
+          float humidity_n = id(humidity).state;
+          if (temperature_n> 20.0) {
+            feel_like = -8.78469475556 + 1.61139411 * temperature_n+ 2.33854883889 * humidity_n- 0.14611605 * temperature_n* humidity_n- 0.012308094 * temperature_n* temperature_n- 0.0164248277778 * humidity_n* humidity_n+ 0.002211732 * temperature_n* temperature_n* humidity_n+ 0.00072546 * temperature_n* humidity_n* humidity_n- 0.000003582 * temperature_n* temperature_n* humidity_n* humidity_n;
+          } else {
+            feel_like = temperature_n;
+          }
+          it.printf(0, 13, id(open_sans), "Humidity: %.1f %%", id(humidity).state);
+          it.printf(0, 26, id(open_sans), "Pressure: %.1f ", id(pressure).state);
+          it.printf(0, 39, id(open_sans), "Feel like: %.1f °C", feel_like);
+      
+      - id: co2page
+        lambda: |-
+          float aqi = aqi_calulate();
+          it.printf(0, 0, id(open_sans), "AQI: %.0f", aqi);
+          it.strftime(80, 0, id(open_sans), "%H:%M:%S", id(sntp_time).now());
+
+          std::string co2_level = "Good";
+          float co2 = id(co2_sensor).state;
+          if (co2 > 1000) {
+            co2_level = "Unhealthy for Some";
+          }else if (co2 > 2000) {
+            co2_level = "Very Unhealthy";
+          }else if (co2 > 5000) {
+            co2_level = "Hazardous, RUN!";
+          }
+
+          it.printf(0, 13, id(open_sans), "Co2: %.1f ppm", id(co2_sensor).state);
+          it.printf(0, 26, id(open_sans), "Co2 value meaning:");
+          it.printf(0, 39, id(open_sans), "%s", co2_level.c_str());
+      
+      - id: mqpage
+        lambda: |-
+          float aqi = aqi_calulate();
+          it.printf(0, 0, id(open_sans), "AQI: %.0f", aqi);
+          it.strftime(80, 0, id(open_sans), "%H:%M:%S", id(sntp_time).now());
+
+          it.printf(0, 13, id(open_sans), "Fire/ MQ2: %s", id(mq2_sensor).state ? "Detected" : " No");
+          it.printf(0, 26, id(open_sans), "Tox/MQ135: %s", id(mq135_sensor).state ? "Detected" : " No");
+          it.printf(0, 39, id(open_sans), "Temp: %.1f/%.1f °C", id(temperature_a).state, id(temperature_b).state);
+          
+
+      - id: alarm_page
+        lambda: |-
+          it.printf(0, 0, id(open_sans), "ALARM");
+          it.strftime(80, 0, id(open_sans), "%H:%M:%S", id(sntp_time).now());
+          //3: mq2
+          //4:  mq135
+          //2:  co2
+          //1:  pm25
+          int air_problem = check_save_air(); 
+          if(air_problem){
+            it.printf(0, 13, id(open_sans), "Problem: %i", air_problem);
+            if(air_problem == 3){
+              it.printf(0, 26, id(open_sans), "LPG/Propane/H2/CO");
+              it.printf(0, 39, id(open_sans), "CH4 detected");
+            }
+            if(air_problem == 4){            
+              it.printf(0, 26, id(open_sans), "NH3/NOx/alcohol/Benze");
+              it.printf(0, 39, id(open_sans), "Smoke detected");
+            }
+            //may not use
+            if(air_problem == 2){
+              it.printf(0, 26, id(open_sans), "Co2 is high");
+              it.printf(0, 13, id(open_sans), "Co2: %.1f ppm", id(co2_sensor).state);
+            }
+            if(air_problem == 1){
+              it.printf(0, 26, id(open_sans), "PM2.5 is high");
+              it.printf(0, 13, id(open_sans), "PM2.5: %.1f µg/m³", id(pm_2_5).state);
+            }
+          }
+          else{
+            it.printf(0, 13, id(open_sans), "No Problem");
+          }
+
+          
+
+
+#sensor 
+sensor:
+  - platform: uptime
+    id: uptime_sensor
+    name: Uptime Sensor
+
+  - platform: aht10
+    variant: AHT20
+    temperature:
+      id: temperature_a
+      name: "Temperature A"
+      filters:
+      - offset: -10.0
+    humidity:
+      id: humidity
+      name: "Humidity"
+    address: 0x38
+    update_interval: 60s
+
+  - platform: bmp280
+    temperature:
+      id: temperature_b
+      name: "Temperature B"
+      oversampling: 16x
+      filters:
+      - offset: -10.0
+    pressure:
+      id: pressure
+      name: "Pressure"
+    address: 0x77
+    update_interval: 60s
+
+  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+    name: "WiFi Signal dB"
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "WiFi Signal Percent"
+    id: wifi_signal_percent
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+
+  - platform: pmsx003
+    uart_id: uartpm
+    type: PMSX003
+    update_interval: 60s
+    id: pmsensor
+    pm_1_0_std:
+      id: pm_1_0
+      name: "Particulate Matter <1.0µm Concentration"
+    pm_2_5_std:
+      id: pm_2_5
+      name: "Particulate Matter <2.5µm Concentration"
+    pm_10_0_std:
+      id: pm_10_0
+      name: "Particulate Matter <10.0µm Concentration"
+
+  - platform: pulse_width
+    pin: 13
+    name: "Co2"
+    id: co2_sensor
+    device_class: carbon_dioxide
+    state_class: measurement
+    filters:
+      lambda: !lambda |-
+        if (x < 0.02) return {};
+        return round(((1000*x)-2)*5);
+    unit_of_measurement: "ppm"
+    update_interval: 5s
+
+switch:
+  - platform: gpio
+    pin: 2
+    id: buzzer
+    name: "Buzzer"
+
+  - platform: gpio
+    pin: 15
+    id: enable_mq
+    name: "Enable MQsensors"
+    restore_mode: ALWAYS_ON
+
+binary_sensor:
+  - platform: gpio
+    id: mq2_sensor
+    pin: 
+      number: 16
+      mode:
+        input: true
+        pulldown: true
+      inverted: true
+    name: "MQ2" 
+
+  - platform: gpio
+    id: mq135_sensor
+    pin: 
+      number: 3
+      mode:
+        input: true
+      inverted: true
+    name: "MQ135" 
+    
+  - platform: gpio
+    pin: 
+      number: 0
+      mode:
+        input: true
+        pullup: true
+    name: "BOOT Button"
+    on_double_click:
+      - if:
+          condition: wifi.enabled
+          then:
+            - wifi.disable:
+            - display.page.show: aqi
+          else:
+            - wifi.enable:
+            - display.page.show: onwifi
+    on_press:
+      - if:
+          condition: 
+            not:
+              wifi.enabled
+          then:
+            - display.page.show_next: my_display
+            - if:
+                condition:
+                  or:
+                    - display.is_displaying_page: onwifi
+                    - display.is_displaying_page: alarm_page
+                then:
+                  - display.page.show: aqi
+
+      - lambda: |-
+          id(last_button_press) = millis();
+          id(my_display).set_contrast(1.0); // Reset brightness on button press
