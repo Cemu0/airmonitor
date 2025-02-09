@@ -43,16 +43,16 @@ By default, the system will boot, then attempt to connect to Wi-Fi. After connec
 1. **Install ESPHome**: Follow the [ESPHome installation guide](https://esphome.io/guides/installing_esphome.html) to set up ESPHome on your system.
 2. **Clone the Repository**: Clone this repository to your local machine.
    ```bash
-   git clone https://github.com/yourusername/AWCPB3.git
-   cd AWCPB3```
-3. **Configure WiFi:**: Update the WiFi credentials in the AWCPB3.yaml file.  
+   git clone https://github.com/cemu0/airmonitor.git
+   cd airmonitor```
+3. **Configure WiFi:**: Update the WiFi credentials in the airmonitor.yaml file.  
     ```
     wifi:
         ssid: "YourSSID"
         password: "YourPassword"
     ```  
 4. **Compile and Upload:** Compile and upload the configuration to your ESP device.
-`esphome run AWCPB3.yaml`
+`esphome run airmonitor.yaml`
 
 ### Code Snippets
 Display Page Example

@@ -1,7 +1,7 @@
 # esphome compile AWCPB3.yaml && esphome upload AWCPB3.yaml
 
 esphome:
-  name: acwcpb
+  name: airmonitor
   includes: 
     - libs/AQI_calculate.h
 
@@ -32,10 +32,6 @@ wifi:
   power_save_mode: none
   # enable_on_boot: true
 
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
-  # ap:
-  #   ssid: "Acwcpb Fallback Hotspot"
-  #   password: "1fCy35laFYbK"
   on_disconnect:
     then:
       - display.page.show: aqi
@@ -47,7 +43,7 @@ web_server:
 time:
   - platform: sntp
     id: sntp_time
-    timezone: Asia/Ho_Chi_Minh
+    #timezone: Asia/Ho_Chi_Minh
     servers:
      - 0.pool.ntp.org
      - 1.pool.ntp.org
@@ -324,8 +320,6 @@ display:
           else{
             it.printf(0, 13, id(open_sans), "No Problem");
           }
-
-          
 
 
 #sensor 
