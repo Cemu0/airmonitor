@@ -1,4 +1,4 @@
-# AWCPB3 Project
+# Another Simple Airmonitor Project
 
 This project is an ESPHome configuration for monitoring air quality and displaying sensor data on an SSD1306 display. The configuration includes multiple pages to show different sensor readings and automatically dims the display if no button is pressed for 1 minute.
 
